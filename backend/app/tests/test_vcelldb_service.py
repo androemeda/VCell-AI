@@ -38,8 +38,8 @@ class TestVCellDBService:
 
         # Verify the result structure
         assert result["models_count"] == 9
-        assert "273924831" in result["unique_model_keys (bmkey)"]
-        assert "271989751" in result["unique_model_keys (bmkey)"]
+        assert "273924831" in result["bmkeys"]
+        assert "271989751" in result["bmkeys"]
 
     async def test_fetch_simulation_details_success(self):
         """Test successful simulation details fetching."""

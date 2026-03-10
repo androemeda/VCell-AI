@@ -111,7 +111,7 @@ async def _get_response_with_native_tools(messages: list[dict]):
 
             # Extract bmkeys only if result is a dictionary and contains the expected key
             if isinstance(result, dict):
-                bmkeys = result.get("unique_model_keys (bmkey)", [])
+                bmkeys = result.get("bmkeys", [])
 
             # Send the result back to the model
             messages.append(
@@ -174,7 +174,7 @@ async def _get_response_with_prompt_tools(messages: list[dict], user_prompt: str
                 logger.info(f"Tool Result: {str(tool_result)[:500]}")
 
                 if isinstance(tool_result, dict):
-                    bmkeys = tool_result.get("unique_model_keys (bmkey)", [])
+                    bmkeys = tool_result.get("bmkeys", [])
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logger.warning(f"Failed to parse tool decision: {e}. Proceeding without tools.")
 

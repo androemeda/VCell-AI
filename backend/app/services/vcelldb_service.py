@@ -99,10 +99,12 @@ async def fetch_biomodels(params: BiomodelRequestParams) -> dict:
     biomodels = raw_data if isinstance(raw_data, list) else raw_data.get("data", [])
 
     # Build response with metadata
+    # "bmkeys" is a list of unique biomodel IDs (bmKey) from the VCell API,
+    # used by the LLM service and frontend to link chat responses to specific biomodels.
     return {
         "search_params": params_dict,
         "models_count": len(biomodels),
-        "unique_model_keys (bmkey)": [
+        "bmkeys": [
             model.get("bmKey") for model in biomodels if model.get("bmKey")
         ],
         "data": biomodels,
