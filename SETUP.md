@@ -190,6 +190,18 @@ AZURE_EMBEDDING_DEPLOYMENT_NAME=nomic-embed-text
 
 ## 5. Running the Application
 
+### 5.0 Database Migrations
+
+Before deploying the backend, run the SQL migrations in `backend/migrations`
+against your Supabase project. Phase 2 LiteLLM user provisioning requires:
+
+```sql
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS litellm_virtual_key TEXT;
+```
+
+This migration is stored at `backend/migrations/001_add_litellm_virtual_key.sql`.
+
 ### 5.1 Start Qdrant Vector Database
 
 ```bash
