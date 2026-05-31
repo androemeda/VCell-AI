@@ -14,9 +14,7 @@ frontend/
 │   ├── diagrams/            # Visual diagram viewer
 │   ├── sbml/                # SBML file viewer
 │   ├── vcml/                # VCML file viewer
-│   ├── admin/               # Admin dashboard
-│   ├── signin/              # Authentication pages
-│   └── signup/              # User registration
+│   └── admin/               # Admin dashboard
 ├── components/              # Reusable UI components
 │   ├── ui/                  # Base UI components (Radix UI)
 │   ├── ChatBox.tsx          # Chat interface component

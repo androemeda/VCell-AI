@@ -67,11 +67,17 @@ async def get_response_with_tools(conversation_history: list[dict]):
     )
 
     # Handle the tool calls
-    tool_calls = response.choices[0].message.tool_calls
+    response_message = response.choices[0].message
+    tool_calls = response_message.tool_calls
 
-    messages.append(response.choices[0].message)
+    messages.append(response_message)
 
     bmkeys = []
+
+    if not tool_calls:
+        final_response = response_message.content or ""
+        logger.info(f"LLM Response: {final_response}")
+        return final_response, bmkeys
 
     if tool_calls:
         for tool_call in tool_calls:
