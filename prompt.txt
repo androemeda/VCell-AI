@@ -1,0 +1,411 @@
+You are implementing multi-model LLM support for VCell-AI, a FastAPI + Next.js application.
+You will work in 5 phases. After each phase, STOP and wait for confirmation before proceeding.
+
+---
+
+## CODEBASE CONTEXT
+
+### Stack
+- Backend: FastAPI (Python 3.12), Poetry, running via uvicorn
+- Frontend: Next.js 15, TypeScript, Tailwind, @auth0/nextjs-auth0 v4
+- Auth: Auth0 (JWT validation in backend via PyJWT + PyJWKClient)
+- DB: Supabase (Postgres) — used for users table
+- Vector DB: Qdrant
+- LLM: Currently uses OpenAI-compatible client (Azure or local Ollama) via singleton in backend/app/core/singleton.py
+- Observability: Langfuse (already wired into the OpenAI client via langfuse.openai)
+- Containerization: Docker Compose at root level
+
+### Key files and their roles
+
+backend/app/core/singleton.py
+- Holds global singletons: openai_client, qdrant_client, supabase_client
+- connect_openai() checks settings.PROVIDER ("azure" or "local") and initializes either AzureOpenAI or OpenAI from langfuse.openai
+- get_openai_client() returns the singleton
+
+backend/app/core/config.py
+- Pydantic Settings class reading from .env
+- Relevant current fields: PROVIDER, AZURE_API_KEY, AZURE_ENDPOINT, AZURE_API_VERSION, AZURE_DEPLOYMENT_NAME, AZURE_EMBEDDING_DEPLOYMENT_NAME, QDRANT_URL, QDRANT_COLLECTION_NAME, LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_HOST, AUTH0_DOMAIN, AUTH0_AUDIENCE, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+
+backend/app/core/auth.py
+- verify_auth0_token(access_token) → returns decoded JWT payload dict
+- Payload contains "sub" field which is the Auth0 sub (e.g. "auth0|abc123") — this is the user's unique identity
+- Used as FastAPI dependency: Depends(verify_auth0_token)
+
+backend/app/services/llms_service.py
+- get_response_with_tools(conversation_history) — main chat function, uses client from get_openai_client()
+- get_llm_response(system_prompt, user_prompt) — simple LLM call helper
+- analyse_vcml, analyse_biomodel, analyse_diagram — specialized analysis functions
+- All functions use: client = get_openai_client() at module level, model=settings.AZURE_DEPLOYMENT_NAME
+
+backend/app/controllers/llms_controller.py and backend/app/routes/llms_router.py
+- Handle the chat HTTP layer. You will need to read these to understand how conversation_history and user identity flow through.
+
+frontend/components/ChatBox.tsx
+- Main chat UI component. You will need to read this to understand the current chat request payload and how to add model selection.
+
+frontend/app/chat/ 
+- Chat page. Read to understand current layout.
+
+### Supabase users table schema
+user_id (PK), auth0_sub, email, name, role, created_at, last_login
+
+### Current .env files
+
+backend/.env currently has:
+FRONTEND_URL, PROVIDER, AZURE_API_VERSION, AZURE_ENDPOINT, AZURE_API_KEY,
+AZURE_DEPLOYMENT_NAME, AZURE_EMBEDDING_DEPLOYMENT_NAME, QDRANT_URL,
+QDRANT_COLLECTION_NAME, LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_HOST,
+AUTH0_DOMAIN, AUTH0_AUDIENCE, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+
+frontend/.env currently has:
+NEXT_PUBLIC_API_URL, APP_BASE_URL, AUTH0_DOMAIN, AUTH0_CLIENT_ID,
+AUTH0_CLIENT_SECRET, AUTH0_SECRET, AUTH0_AUDIENCE
+
+### Current docker-compose.yml services
+- qdrant (qdrant/qdrant, port 6333/6334)
+- backend (build ./backend, port 8000, env_file ./backend/.env)
+- frontend (build ./frontend, port 3000, env_file ./frontend/.env)
+
+---
+
+## WHAT WE ARE BUILDING
+
+### Goals
+1. User-controlled model switching — user can choose between "openai" and "local" model in the chat UI
+2. Automatic silent fallback — when a user's OpenAI budget is exhausted, requests are rerouted to the local LLM with no error shown to the user
+3. Per-user budget management — org admins set individual token/spend limits per user from LiteLLM's built-in dashboard
+4. Persistent tracking — usage and budgets survive container restarts, stored in Supabase
+
+### Tool: LiteLLM Proxy
+- Runs as a new Docker container in docker-compose.yml
+- FastAPI calls it at http://litellm:4000 (internal Docker network, never exposed raw to the internet)
+- Exposes an OpenAI-compatible API — minimal changes to existing FastAPI LLM call code
+- Connects to Supabase directly for persistent budget/spend storage
+- Has a built-in admin dashboard at /ui (to be proxied behind auth in production)
+- Langfuse integration: LiteLLM proxy can send traces to Langfuse via litellm_config.yaml — use this instead of the current per-client langfuse.openai wrapper
+
+### LiteLLM model names to use
+- "openai-model" → OpenAI GPT-4o (or whatever model the org uses)
+- "local-model" → self-hosted Ollama/vLLM on a separate GPU server
+
+### User identity mapping
+- LiteLLM user_id = Auth0 sub (e.g. "auth0|abc123")
+- Each user gets one LiteLLM virtual key, stored in Supabase users table as litellm_virtual_key column
+- Virtual keys are permanent (no expiry) unless manually revoked
+- On first login, FastAPI provisions the user in LiteLLM and stores the key in Supabase
+- On every LLM request, FastAPI fetches the virtual key from Supabase and passes it as the Authorization header to LiteLLM
+
+### Budget and fallback behaviour
+- Budgets are set in USD (e.g. $10.00) per user, per period (e.g. "30d")
+- When budget is exhausted, LiteLLM silently falls back to local-model
+- Fallback is configured in litellm_config.yaml — no code needed in FastAPI for this
+- The frontend should display a subtle indicator when the local model is being used (check "model" field in response)
+
+---
+
+## PHASE 1 — LiteLLM Proxy Infrastructure
+
+### Objective
+Add the LiteLLM proxy as a running Docker service, verify it connects to Supabase and both LLM providers.
+
+### Tasks
+
+1. Create litellm_config.yaml at the repo root with:
+   - model_list defining "openai-model" (OpenAI GPT-4o) and "local-model" (Ollama, api_base from env)
+   - fallbacks: openai-model falls back to local-model
+   - general_settings.database_url pointing to Supabase via env var
+   - Langfuse callback configured via environment variables (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST)
+   - litellm_settings.num_retries: 2
+   - litellm_settings.request_timeout: 60
+
+2. Add a litellm service to docker-compose.yml:
+   - image: ghcr.io/berriai/litellm:main-stable
+   - ports: "4000:4000" (for local dev access; in production this will be internal only)
+   - volumes: ./litellm_config.yaml:/app/config.yaml
+   - environment: pass OPENAI_API_KEY, LOCAL_LLM_API_BASE, DATABASE_URL (Supabase connection string), LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+   - command: --config /app/config.yaml --detailed_debug
+   - healthcheck: curl -f http://localhost:4000/health/liveliness
+   - restart: unless-stopped
+
+3. Create a litellm.env file at the repo root for LiteLLM-specific environment variables. Add it to .gitignore. Document all required variables in a litellm.env.example file.
+
+4. Add LITELLM_MASTER_KEY to litellm.env — this is the admin key for the LiteLLM dashboard and for FastAPI to call the LiteLLM management API (/user/new, /key/generate).
+
+5. Add new env variables to backend/.env:
+   - LITELLM_URL=http://litellm:4000
+   - LITELLM_MASTER_KEY=same value as in litellm.env
+   - DEFAULT_USER_BUDGET=10.00
+   - DEFAULT_BUDGET_DURATION=30d
+
+6. Add these new variables to backend/app/core/config.py Settings class with appropriate types and defaults.
+
+7. Write a health check script (can be a simple curl or Python httpx call) that verifies:
+   - LiteLLM proxy is reachable at http://localhost:4000/health
+   - LiteLLM can reach OpenAI (GET /health/readiness)
+   - LiteLLM has connected to Supabase (its tables should appear)
+
+### Acceptance criteria for Phase 1
+- docker compose up starts all services including litellm without errors
+- curl http://localhost:4000/health returns 200
+- LiteLLM admin dashboard is accessible at http://localhost:4000/ui
+- LiteLLM tables (LiteLLM_UserTable, LiteLLM_SpendLogs, etc.) are visible in Supabase
+- A test call via curl to http://localhost:4000/chat/completions with LITELLM_MASTER_KEY routes correctly to the configured model
+
+STOP after Phase 1. Do not proceed to Phase 2.
+
+---
+
+## PHASE 2 — User Provisioning
+
+### Objective
+On first login, provision each user in LiteLLM (create user + generate virtual key) and store the key in Supabase. On subsequent logins, use the existing key.
+
+### Tasks
+
+1. Add litellm_virtual_key column to Supabase users table:
+   - Write a SQL migration: ALTER TABLE users ADD COLUMN IF NOT EXISTS litellm_virtual_key TEXT;
+   - Put this in a new file: backend/migrations/001_add_litellm_virtual_key.sql
+   - Add a note in SETUP.md that this migration must be run before deploying
+
+2. Create backend/app/services/litellm_service.py with:
+
+   async def provision_user(auth0_sub: str, email: str) -> str:
+     """
+     Creates user in LiteLLM and generates a virtual key.
+     Returns the virtual key string.
+     Called only on first login (when litellm_virtual_key is NULL in Supabase).
+     """
+     # POST http://litellm:4000/user/new with LITELLM_MASTER_KEY
+     # body: { user_id: auth0_sub, user_email: email, max_budget: settings.DEFAULT_USER_BUDGET, budget_duration: settings.DEFAULT_BUDGET_DURATION }
+     # then POST /key/generate with the user_id to get a virtual key
+     # return the key string (starts with "sk-")
+
+   async def get_or_create_virtual_key(auth0_sub: str, email: str, supabase: Client) -> str:
+     """
+     Checks Supabase for existing virtual key.
+     If found, returns it.
+     If not found, calls provision_user() and stores the key in Supabase.
+     """
+
+   async def get_user_budget_info(auth0_sub: str) -> dict:
+     """
+     Calls GET http://litellm:4000/user/info?user_id=auth0_sub with LITELLM_MASTER_KEY
+     Returns spend, max_budget, budget_duration, budget_reset_at
+     Used optionally by frontend to display remaining budget
+     """
+
+3. Integrate get_or_create_virtual_key into the existing login/user-sync flow:
+   - Read backend/app/controllers/users_controller.py and backend/app/routes/users_router.py to find where user login/upsert currently happens
+   IMPORTANT CONTEXT — users_controller.py current state:
+
+The sync_current_user_controller currently only upserts auth0_sub into Supabase.
+It does not store email or name. The JWT payload from Auth0 may contain email
+depending on Auth0 scopes configured — check payload.get("email") and
+payload.get("name") but treat them as optional (may be None).
+
+Before integrating LiteLLM provisioning, first update sync_current_user_controller to:
+1. Also upsert email and name if present in the payload (they may be None — use
+   conditional inclusion, do not overwrite existing values with None)
+2. After the upsert, call get_or_create_virtual_key(auth0_sub, email, supabase)
+   where email = payload.get("email") or ""
+3. Return the virtual key status in the response (provisioned: true/false) for
+   debugging purposes — this is not shown to the frontend user
+
+The upsert should use:
+{
+    "auth0_sub": auth0_sub,
+    "email": payload.get("email"),      # may be None, Supabase will ignore if None
+    "name": payload.get("name"),        # may be None
+    "last_login": "now()",              # update last_login on every sync
+}
+
+Also note: get_supabase_client() is synchronous (uses the supabase-py sync client).
+All new litellm_service.py functions use httpx.AsyncClient and must be awaited.
+sync_current_user_controller is currently not async — make it async as part of
+this change, and update the route in users_router.py accordingly.
+   - After the user is upserted into Supabase, call get_or_create_virtual_key(auth0_sub, email, supabase)
+   - This ensures the virtual key exists before any LLM request is made
+
+4. Error handling:
+   - If LiteLLM provisioning fails (e.g. LiteLLM is down), log the error but do NOT block login
+   - The virtual key can be provisioned lazily on first LLM request if it's still NULL
+
+### Acceptance criteria for Phase 2
+- A new user logs in → litellm_virtual_key column in Supabase is populated with a "sk-..." key
+- LiteLLM dashboard at /ui shows the user listed under "Users" with their budget
+- A returning user logs in → no duplicate provisioning, existing key is reused
+- The migration SQL file exists and is documented
+
+STOP after Phase 2. Do not proceed to Phase 3.
+
+---
+
+## PHASE 3 — FastAPI LLM Layer Integration
+
+### Objective
+Update FastAPI to route all LLM calls through LiteLLM proxy, passing the user's virtual key per request. Remove the global singleton client pattern for LLM calls — the client must be per-request so it carries the correct user's virtual key.
+
+### Tasks
+
+1. Update backend/app/core/singleton.py:
+   - Remove the global openai_client singleton and connect_openai() / get_openai_client() functions
+   - Add a new function: get_litellm_client(virtual_key: str) -> OpenAI
+     - Returns an openai.AsyncOpenAI client with base_url=settings.LITELLM_URL and api_key=virtual_key
+     - Use openai.AsyncOpenAI (not langfuse.openai) — Langfuse tracing is now handled by LiteLLM proxy itself
+     - Do NOT cache this client globally — it must be instantiated per-request with the correct key
+
+2. Update backend/app/services/llms_service.py:
+   - Remove the module-level: client = get_openai_client()
+   - All functions that make LLM calls (get_response_with_tools, get_llm_response, analyse_vcml, analyse_biomodel, analyse_diagram) must accept two new parameters:
+     - virtual_key: str — the user's LiteLLM virtual key
+     - model: str — "openai-model" or "local-model"
+   - Inside each function, instantiate the client: client = get_litellm_client(virtual_key)
+   - Replace model=settings.AZURE_DEPLOYMENT_NAME with model=model in all client.chat.completions.create() calls
+   - For analyse_diagram, the image_url call also uses the LiteLLM client — update this too
+   - Make all LLM calls use await (async) — update to client.chat.completions.create → await client.chat.completions.create
+
+3. Update backend/app/controllers/llms_controller.py:
+   - Read the current controller to understand the existing request schema
+   - Add "model" field to the chat request schema (backend/app/schemas/) — type: Literal["openai-model", "local-model"], default: "openai-model"
+   - The controller must:
+     a. Extract auth0_sub from the verified JWT payload (already available via Depends(verify_auth0_token))
+     b. Fetch the user's virtual key from Supabase using get_or_create_virtual_key(auth0_sub, email, supabase)
+     c. Pass virtual_key and model down to the llms_service functions
+   - Update the FastAPI route dependency to include Depends(verify_auth0_token) if not already present on LLM routes
+
+4. Update backend/app/routes/llms_router.py:
+   - Ensure all LLM routes require authentication (Depends(verify_auth0_token))
+   - Pass the token payload to the controller
+
+5. Remove now-unused Azure/local config from config.py if they are fully replaced:
+   - Keep AZURE_EMBEDDING_DEPLOYMENT_NAME if embeddings still use the old path (check knowledge_base_service.py)
+   - Remove PROVIDER, AZURE_API_KEY, AZURE_ENDPOINT, AZURE_API_VERSION, AZURE_DEPLOYMENT_NAME only if no other service uses them
+   - If embeddings still need the old client, keep a separate embeddings client using the old singleton pattern — do NOT break embeddings
+
+### Acceptance criteria for Phase 3
+- End-to-end chat request: Frontend → FastAPI → LiteLLM → OpenAI works
+- The LiteLLM dashboard shows spend being tracked per user after a chat message
+- Changing model to "local-model" in the request body routes to the local LLM
+- Embeddings (if used) are not broken
+- No module-level openai_client singleton remains for chat functions
+
+STOP after Phase 3. Do not proceed to Phase 4.
+
+---
+
+## PHASE 4 — Frontend Model Selector
+
+### Objective
+Add a model selector to the chat UI. Pass the selected model to the backend. Show a subtle indicator when the local model is active (either by user choice or due to fallback).
+
+### Tasks
+
+1. Read frontend/components/ChatBox.tsx fully before making any changes.
+   Read frontend/app/chat/ to understand the page layout.
+
+2. Add a model selector component to the chat UI:
+   - A simple toggle or dropdown with two options: "OpenAI" and "Local LLM"
+   - Default: "OpenAI" (openai-model)
+   - Store selected model in local React state in ChatBox.tsx
+   - Position it near the chat input, unobtrusive (e.g. a small segmented control or Select component using the existing @radix-ui/react-select already in package.json)
+   - Use existing Tailwind classes and shadcn/ui patterns already in the codebase
+
+3. Include the selected model in the chat request payload sent to the FastAPI backend:
+   - Read the current fetch/axios call in ChatBox.tsx to find the exact payload structure
+   - Add "model": "openai-model" | "local-model" to the request body
+
+4. Display a subtle model indicator in the chat:
+   - When a response arrives, check the response for which model was actually used
+   - If the backend returns "local-model" in the response metadata (you will add this in step 5), show a small badge or muted text: "Responded via Local LLM"
+   - This handles both explicit user selection of local model AND silent fallback cases
+   - Keep it visually subtle — this is informational, not an error state
+
+5. Update the FastAPI LLM response to include which model was actually used:
+   - In llms_controller.py, after getting the response from llms_service, include the model name in the API response
+   - Update the response schema to include a "model_used" field
+   - The LiteLLM response object includes a "model" field — extract and return it
+
+6. TypeScript types:
+   - Update any existing TypeScript interfaces for the chat request and response in the frontend to include the new fields
+
+### Acceptance criteria for Phase 4
+- Model selector is visible in the chat UI
+- Switching to "Local LLM" and sending a message routes to local-model (verify in LiteLLM dashboard)
+- When fallback occurs (budget exhausted → local model used), the indicator shows "Responded via Local LLM"
+- No visual regressions in the existing chat UI
+
+STOP after Phase 4. Do not proceed to Phase 5.
+
+---
+
+## PHASE 5 — Budget Testing, Hardening, and Production Readiness
+
+### Objective
+Verify the full fallback flow works, harden error handling, and ensure the setup is production-ready.
+
+### Tasks
+
+1. Budget exhaustion test:
+   - Write a test or manual test script (backend/tests/test_litellm_integration.py) that:
+     a. Creates a test user in LiteLLM with a very small budget ($0.001)
+     b. Makes a chat request through FastAPI
+     c. Verifies the response comes from local-model (fallback triggered)
+     d. Verifies no error is returned to the caller — a valid response is always returned
+   - Use pytest-asyncio (already in pyproject.toml)
+
+2. Lazy provisioning fallback:
+   - In llms_controller.py, if get_or_create_virtual_key raises an exception (LiteLLM down during signup):
+     - Log the error
+     - Fall back to using LITELLM_MASTER_KEY directly for that request
+     - This ensures LLM calls work even if provisioning failed at login time
+
+3. Production docker-compose hardening:
+   - Create a docker-compose.prod.yml (or add a prod override) that:
+     - Does NOT expose port 4000 of LiteLLM publicly (remove the ports mapping or bind to 127.0.0.1:4000)
+     - Adds a resource limit on the litellm container (memory: 512m)
+     - Sets restart: always on all services
+     - Uses specific image tags instead of :main-stable (pin to a version)
+
+4. Nginx reverse proxy config for LiteLLM admin dashboard:
+   - Create nginx/litellm.conf that proxies /litellm/ → http://litellm:4000/
+   - Add basic auth or IP allowlist comment — note that this must be secured before production
+   - This is a config file only; actual Nginx setup depends on the org's server config
+
+5. Environment variable documentation:
+   - Update backend/.env.example with all new variables:
+     LITELLM_URL, LITELLM_MASTER_KEY, DEFAULT_USER_BUDGET, DEFAULT_BUDGET_DURATION
+   - Update litellm.env.example with all LiteLLM-specific variables:
+     OPENAI_API_KEY, LOCAL_LLM_API_BASE, DATABASE_URL, LITELLM_MASTER_KEY,
+     LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+   - Update SETUP.md with:
+     a. The Supabase migration to run
+     b. All new environment variables and where to get their values
+     c. How to access the LiteLLM admin dashboard
+     d. How to set per-user budgets from the dashboard
+
+6. Update backend/app/services/litellm_service.py with production-grade error handling:
+   - All httpx calls to LiteLLM management API should have timeouts (timeout=10.0)
+   - Wrap in try/except, log errors with logger from app.core.logger
+   - Never let a LiteLLM management API failure crash a user request
+
+### Acceptance criteria for Phase 5
+- The budget exhaustion test passes: a user with $0.001 budget gets a valid response (from local model)
+- docker compose -f docker-compose.prod.yml up starts cleanly with LiteLLM not publicly exposed
+- All new env variables are documented in .env.example files
+- SETUP.md has clear instructions for running the migration and configuring budgets
+- No unhandled exceptions reach the user from LiteLLM-related code paths
+
+---
+
+## GENERAL RULES FOR ALL PHASES
+
+- Read every file you are about to modify before modifying it
+- Do not break existing functionality: Qdrant, VCML analysis, diagram analysis, biomodel search must continue to work
+- Do not remove Langfuse integration — it moves from the OpenAI client wrapper to LiteLLM's native callback
+- Follow the existing code patterns: use app.core.logger for logging, use app.core.config.settings for env vars, use Pydantic models for schemas
+- Use httpx.AsyncClient for all async HTTP calls to the LiteLLM management API
+- All new backend code should be async
+- Do not install new Python packages without updating pyproject.toml and running poetry lock
+- Add litellm as a Python dependency in pyproject.toml even though we primarily use the proxy — it is needed for the litellm_service.py type hints and any SDK utilities used
+- For the frontend, use existing shadcn/ui components already in components/ui/ before reaching for new ones
+- Keep .env files out of git — check .gitignore before creating new env files

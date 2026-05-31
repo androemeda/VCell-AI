@@ -10,6 +10,27 @@ services:
       - qdrant-data:/qdrant/storage
     restart: unless-stopped
 
+  ### LiteLLM Proxy (OpenAI-compatible LLM gateway)
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: litellm-vcellai
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml
+    env_file:
+      - ./litellm.env
+    environment:
+      - PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true
+    command: --config /app/config.yaml --detailed_debug --use_v2_migration_resolver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health/liveliness"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   ### Backend (FastAPI with Poetry)
   backend:
     build: ./backend
@@ -18,6 +39,7 @@ services:
       - "8000:8000"
     depends_on:
       - qdrant
+      - litellm
     volumes:
       - ./backend:/app 
     command: ["sh", "-c", "poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
