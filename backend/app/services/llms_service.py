@@ -13,10 +13,59 @@ from app.utils.system_prompt import SYSTEM_PROMPT
 
 from app.schemas.vcelldb_schema import BiomodelRequestParams
 from app.core.litellm import get_litellm_client
+from app.core.config import settings
 import json
 from app.core.logger import get_logger
 
 logger = get_logger("llm_service")
+
+LOCAL_MODEL = "local-model"
+
+
+def _key_for_model(virtual_key: str, model: str) -> str:
+    if model == LOCAL_MODEL and settings.LITELLM_MASTER_KEY:
+        return settings.LITELLM_MASTER_KEY
+    return virtual_key
+
+
+def _is_budget_error(error: Exception) -> bool:
+    status_code = getattr(error, "status_code", None)
+    error_text = str(error).lower()
+    return status_code in {400, 402, 429} and any(
+        marker in error_text
+        for marker in (
+            "budget",
+            "quota",
+            "limit",
+            "exceeded",
+            "insufficient_quota",
+            "rate_limit",
+        )
+    )
+
+
+async def _create_chat_completion(
+    virtual_key: str,
+    model: str,
+    **kwargs,
+):
+    client = get_litellm_client(_key_for_model(virtual_key, model))
+    try:
+        response = await client.chat.completions.create(model=model, **kwargs)
+        model_used = LOCAL_MODEL if model == LOCAL_MODEL else response.model or model
+        return response, model_used
+    except Exception as error:
+        if model != LOCAL_MODEL and _is_budget_error(error):
+            logger.info(
+                f"LiteLLM budget limit reached for {model}; retrying with {LOCAL_MODEL}"
+            )
+            local_client = get_litellm_client(_key_for_model(virtual_key, LOCAL_MODEL))
+            response = await local_client.chat.completions.create(
+                model=LOCAL_MODEL,
+                **kwargs,
+            )
+            return response, LOCAL_MODEL
+        raise
 
 
 async def get_llm_response(
@@ -38,9 +87,9 @@ async def get_llm_response(
         {"role": "user", "content": user_prompt},
     ]
 
-    client = get_litellm_client(virtual_key)
-    response = await client.chat.completions.create(
-        model=model,
+    response, _model_used = await _create_chat_completion(
+        virtual_key,
+        model,
         messages=messages,
     )
 
@@ -65,9 +114,9 @@ async def get_response_with_tools(
 
     logger.info(f"User prompt: {user_prompt}")
 
-    client = get_litellm_client(virtual_key)
-    response = await client.chat.completions.create(
-        model=model,
+    response, model_used = await _create_chat_completion(
+        virtual_key,
+        model,
         messages=messages,
         tools=tools,
         tool_choice="auto",
@@ -84,7 +133,7 @@ async def get_response_with_tools(
     if not tool_calls:
         final_response = response_message.content or ""
         logger.info(f"LLM Response: {final_response}")
-        return final_response, bmkeys, response.model or model
+        return final_response, bmkeys, model_used
 
     if tool_calls:
         for tool_call in tool_calls:
@@ -111,8 +160,9 @@ async def get_response_with_tools(
     logger.info(str(messages))
 
     # Send back the final response incorporating the tool result
-    completion = await client.chat.completions.create(
-        model=model,
+    completion, model_used = await _create_chat_completion(
+        virtual_key,
+        model,
         messages=messages,
     )
 
@@ -120,7 +170,7 @@ async def get_response_with_tools(
 
     logger.info(f"LLM Response: {final_response}")
 
-    return final_response, bmkeys, completion.model or model
+    return final_response, bmkeys, model_used
 
 
 async def analyse_vcml(biomodel_id: str, virtual_key: str, model: str):
@@ -240,9 +290,9 @@ async def analyse_diagram(biomodel_id: str, virtual_key: str, model: str):
             {"type": "text", "text": diagram_analysis_prompt},
             {"type": "image_url", "image_url": {"url": diagram_url}},
         ]
-        client = get_litellm_client(virtual_key)
-        response = await client.chat.completions.create(
-            model=model,
+        response, _model_used = await _create_chat_completion(
+            virtual_key,
+            model,
             messages=[
                 {
                     "role": "user",
