@@ -43,6 +43,7 @@ async def provision_user(auth0_sub: str, email: str) -> str:
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
+        user_already_exists = False
         user_response = await client.post(
             f"{base_url}/user/new",
             headers=_headers(),
@@ -56,11 +57,23 @@ async def provision_user(auth0_sub: str, email: str) -> str:
                 and "exist" in response_text
             ):
                 logger.info(f"LiteLLM user already exists for {auth0_sub}")
+                user_already_exists = True
             else:
                 user_response.raise_for_status()
 
-    user_data = user_response.json()
-    virtual_key = user_data.get("key")
+        if user_already_exists:
+            key_response = await client.post(
+                f"{base_url}/key/generate",
+                headers=_headers(),
+                json={"user_id": auth0_sub},
+            )
+            key_response.raise_for_status()
+            key_data = key_response.json()
+            virtual_key = key_data.get("key")
+        else:
+            user_data = user_response.json()
+            virtual_key = user_data.get("key")
+
     if not virtual_key or not virtual_key.startswith("sk-"):
         raise ValueError("LiteLLM did not return a valid virtual key for new user")
 
@@ -100,9 +113,17 @@ async def get_or_create_virtual_key(
 
     virtual_key = await provision_user(auth0_sub=auth0_sub, email=email)
 
-    supabase.table("users").update(
-        {"litellm_virtual_key": virtual_key},
-    ).eq("auth0_sub", auth0_sub).execute()
+    user_values = {
+        "auth0_sub": auth0_sub,
+        "litellm_virtual_key": virtual_key,
+    }
+    if email:
+        user_values["email"] = email
+
+    supabase.table("users").upsert(
+        user_values,
+        on_conflict="auth0_sub",
+    ).execute()
 
     return virtual_key
 

@@ -1,16 +1,22 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
 from app.controllers.llms_controller import (
     get_llm_response,
     analyse_biomodel_controller,
     analyse_vcml_controller,
     analyse_diagram_controller,
 )
+from app.core.auth import verify_auth0_token
+from app.schemas.llms_schema import ChatRequest, LLMModel
 
 router = APIRouter()
 
 
 @router.post("/query")
-async def query_llm(conversation_history: dict):
+async def query_llm(
+    request: ChatRequest,
+    payload: dict = Depends(verify_auth0_token),
+):
     """
     Endpoint to query the LLM and execute the necessary tools.
     Args:
@@ -19,13 +25,20 @@ async def query_llm(conversation_history: dict):
         dict: The final response after processing the prompt with the tools.
     """
     result, bmkeys = await get_llm_response(
-        conversation_history.get("conversation_history", [])
+        request.conversation_history,
+        request.model,
+        payload,
     )
     return {"response": result, "bmkeys": bmkeys}
 
 
 @router.post("/analyse/{biomodel_id}")
-async def analyse_biomodel(biomodel_id: str, user_prompt: str):
+async def analyse_biomodel(
+    biomodel_id: str,
+    user_prompt: str,
+    model: LLMModel = "openai-model",
+    payload: dict = Depends(verify_auth0_token),
+):
     """
     Endpoint to analyze a biomodel using the LLM service.
     Args:
@@ -34,12 +47,16 @@ async def analyse_biomodel(biomodel_id: str, user_prompt: str):
     Returns:
         dict: The analysis result from the LLM service.
     """
-    result = await analyse_biomodel_controller(biomodel_id, user_prompt)
+    result = await analyse_biomodel_controller(biomodel_id, user_prompt, model, payload)
     return {"response": result}
 
 
 @router.post("/analyse/{biomodel_id}/vcml")
-async def analyse_vcml(biomodel_id: str):
+async def analyse_vcml(
+    biomodel_id: str,
+    model: LLMModel = "openai-model",
+    payload: dict = Depends(verify_auth0_token),
+):
     """
     Endpoint to analyze VCML content for a given biomodel.
     Args:
@@ -47,12 +64,16 @@ async def analyse_vcml(biomodel_id: str):
     Returns:
         dict: The VCML analysis response.
     """
-    result = await analyse_vcml_controller(biomodel_id)
+    result = await analyse_vcml_controller(biomodel_id, model, payload)
     return {"response": result}
 
 
 @router.post("/analyse/{biomodel_id}/diagram")
-async def analyse_diagram(biomodel_id: str):
+async def analyse_diagram(
+    biomodel_id: str,
+    model: LLMModel = "openai-model",
+    payload: dict = Depends(verify_auth0_token),
+):
     """
     Endpoint to analyze diagram for a given biomodel.
     Args:
@@ -60,5 +81,5 @@ async def analyse_diagram(biomodel_id: str):
     Returns:
         dict: The diagram analysis response.
     """
-    result = await analyse_diagram_controller(biomodel_id)
+    result = await analyse_diagram_controller(biomodel_id, model, payload)
     return {"response": result}

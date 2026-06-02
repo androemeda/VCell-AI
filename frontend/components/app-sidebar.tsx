@@ -277,10 +277,10 @@ export function AppSidebar() {
               asChild
               title={isCollapsed ? "Logout" : undefined}
             >
-              <Link href="/auth/logout">
+              <a href="/auth/logout">
                 <LogOut className="h-3 w-3" />
                 {!isCollapsed && "Logout"}
-              </Link>
+              </a>
             </Button>
           </div>
 
