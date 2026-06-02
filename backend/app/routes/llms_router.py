@@ -7,12 +7,12 @@ from app.controllers.llms_controller import (
     analyse_diagram_controller,
 )
 from app.core.auth import verify_auth0_token
-from app.schemas.llms_schema import ChatRequest, LLMModel
+from app.schemas.llms_schema import ChatRequest, ChatResponse, LLMModel
 
 router = APIRouter()
 
 
-@router.post("/query")
+@router.post("/query", response_model=ChatResponse)
 async def query_llm(
     request: ChatRequest,
     payload: dict = Depends(verify_auth0_token),
@@ -24,12 +24,12 @@ async def query_llm(
     Returns:
         dict: The final response after processing the prompt with the tools.
     """
-    result, bmkeys = await get_llm_response(
+    result, bmkeys, model_used = await get_llm_response(
         request.conversation_history,
         request.model,
         payload,
     )
-    return {"response": result, "bmkeys": bmkeys}
+    return {"response": result, "bmkeys": bmkeys, "model_used": model_used}
 
 
 @router.post("/analyse/{biomodel_id}")

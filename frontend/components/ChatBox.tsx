@@ -3,15 +3,31 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { MessageSquare, Send, Bot, User, Loader2 } from "lucide-react";
 import { getAccessToken } from "@auth0/nextjs-auth0/client";
+
+type ModelId = "openai-model" | "local-model";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  modelUsed?: string;
+}
+
+interface ChatResponse {
+  response?: string;
+  bmkeys?: string[];
+  model_used?: string;
 }
 
 interface QuickAction {
@@ -78,6 +94,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   );
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<ModelId>("openai-model");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -194,10 +211,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               role: msg.role,
               content: msg.content,
             })),
+            model: selectedModel,
           }),
         },
       );
-      const data = await res.json();
+      const data = (await res.json()) as ChatResponse;
       const aiResponse =
         data.response || "Sorry, I didn't get a response from the server.";
       const bmkeys = data.bmkeys || [];
@@ -210,6 +228,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         role: "assistant",
         content: formattedResponse,
         timestamp: new Date(),
+        modelUsed: data.model_used,
       };
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
@@ -234,6 +253,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       handleSendMessage();
     }
   };
+
+  const isLocalModel = (model?: string) =>
+    model === "local-model" ||
+    model?.toLowerCase().includes("local") ||
+    model?.toLowerCase().includes("ollama");
 
   return (
     <Card className="h-full flex flex-col shadow-sm border-slate-200">
@@ -283,6 +307,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     ) : (
                       <MarkdownRenderer content={message.content} />
                     )}
+                    {message.role === "assistant" &&
+                      isLocalModel(message.modelUsed) && (
+                        <div className="mt-2 text-xs text-slate-500">
+                          Responded via Local LLM
+                        </div>
+                      )}
                   </div>
                 </div>
               </div>
@@ -319,6 +349,22 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       </CardContent>
       <div className="border-t border-slate-200 p-4 flex-shrink-0">
         <div className="flex gap-2">
+          <Select
+            value={selectedModel}
+            onValueChange={(value) => setSelectedModel(value as ModelId)}
+          >
+            <SelectTrigger
+              className="h-10 w-[136px] border-slate-300 bg-white text-slate-700"
+              aria-label="Model"
+              disabled={isLoading || isInitialLoading}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai-model">OpenAI</SelectItem>
+              <SelectItem value="local-model">Local LLM</SelectItem>
+            </SelectContent>
+          </Select>
           <Input
             ref={inputRef}
             value={inputMessage}

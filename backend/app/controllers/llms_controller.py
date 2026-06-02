@@ -34,13 +34,13 @@ async def get_llm_response(
     conversation_history: list[dict],
     model: LLMModel,
     payload: dict,
-) -> tuple[str, list]:
+) -> tuple[str, list, str]:
     """
     Controller function to interact with the LLM service.
     Args:
         conversation_history (list[dict]): The conversation history containing user prompts and responses.
     Returns:
-        tuple[str, list]: A tuple containing the final response and bmkeys list.
+        tuple[str, list, str]: Final response, bmkeys list, and model used.
     """
     try:
         if not conversation_history:
@@ -51,12 +51,12 @@ async def get_llm_response(
 
         supabase = get_supabase_client()
         virtual_key = await _get_virtual_key(payload, supabase)
-        result, bmkeys = await get_response_with_tools(
+        result, bmkeys, model_used = await get_response_with_tools(
             conversation_history,
             virtual_key,
             model,
         )
-        return result, bmkeys
+        return result, bmkeys, model_used
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e

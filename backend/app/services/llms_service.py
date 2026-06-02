@@ -51,7 +51,7 @@ async def get_response_with_tools(
     conversation_history: list[dict],
     virtual_key: str,
     model: str,
-):
+) -> tuple[str, list, str]:
     messages = [
         {
             "role": "system",
@@ -84,7 +84,7 @@ async def get_response_with_tools(
     if not tool_calls:
         final_response = response_message.content or ""
         logger.info(f"LLM Response: {final_response}")
-        return final_response, bmkeys
+        return final_response, bmkeys, response.model or model
 
     if tool_calls:
         for tool_call in tool_calls:
@@ -120,7 +120,7 @@ async def get_response_with_tools(
 
     logger.info(f"LLM Response: {final_response}")
 
-    return final_response, bmkeys
+    return final_response, bmkeys, completion.model or model
 
 
 async def analyse_vcml(biomodel_id: str, virtual_key: str, model: str):
