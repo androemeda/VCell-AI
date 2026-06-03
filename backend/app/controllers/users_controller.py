@@ -4,7 +4,10 @@ from fastapi import HTTPException
 
 from app.core.logger import get_logger
 from app.core.singleton import get_supabase_client
-from app.services.litellm_service import get_or_create_virtual_key
+from app.services.litellm_service import (
+    get_or_create_virtual_key,
+    get_user_budget_info,
+)
 
 logger = get_logger("users_controller")
 
@@ -72,3 +75,29 @@ async def sync_current_user_controller(
         "user": response.data[0] if response.data else None,
         "litellm_virtual_key": virtual_key_status,
     }
+
+
+async def get_current_user_budget_controller(payload: dict) -> dict:
+    auth0_sub = payload.get("sub")
+
+    if not auth0_sub:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing Auth0 subject claim",
+        )
+
+    supabase = get_supabase_client()
+    await get_or_create_virtual_key(
+        auth0_sub=auth0_sub,
+        email=payload.get("email") or "",
+        supabase=supabase,
+    )
+
+    try:
+        return await get_user_budget_info(auth0_sub)
+    except Exception as exc:
+        logger.error(f"LiteLLM budget lookup failed for {auth0_sub}: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to retrieve budget from LiteLLM",
+        )

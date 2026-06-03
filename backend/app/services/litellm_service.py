@@ -148,9 +148,25 @@ async def get_user_budget_info(auth0_sub: str) -> dict:
     if isinstance(user_info, dict):
         data = user_info
 
+    spend = _as_float(data.get("spend")) or 0.0
+    max_budget = _as_float(data.get("max_budget"))
+    remaining_budget = None
+    if max_budget is not None:
+        remaining_budget = max(max_budget - spend, 0)
+
     return {
-        "spend": data.get("spend"),
-        "max_budget": data.get("max_budget"),
+        "spend": spend,
+        "max_budget": max_budget,
+        "remaining_budget": remaining_budget,
         "budget_duration": data.get("budget_duration"),
         "budget_reset_at": data.get("budget_reset_at"),
     }
+
+
+def _as_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
