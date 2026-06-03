@@ -86,13 +86,6 @@ async def get_current_user_budget_controller(payload: dict) -> dict:
             detail="Missing Auth0 subject claim",
         )
 
-    supabase = get_supabase_client()
-    await get_or_create_virtual_key(
-        auth0_sub=auth0_sub,
-        email=payload.get("email") or "",
-        supabase=supabase,
-    )
-
     try:
         return await get_user_budget_info(auth0_sub)
     except Exception as exc:
