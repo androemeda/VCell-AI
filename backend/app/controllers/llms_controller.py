@@ -93,6 +93,7 @@ async def analyse_diagram_controller(
     biomodel_id: str,
     model: LLMModel,
     payload: dict,
+    client_bearer_token: str,
 ) -> str:
     """
     Controller function to analyze diagram for a given biomodel.
@@ -104,7 +105,12 @@ async def analyse_diagram_controller(
     try:
         supabase = get_supabase_client()
         virtual_key = await _get_virtual_key(payload, supabase)
-        result = await analyse_diagram(biomodel_id, virtual_key, model)
+        result = await analyse_diagram(
+            biomodel_id,
+            virtual_key,
+            model,
+            client_bearer_token,
+        )
         return result
     except Exception as e:
         if isinstance(e, HTTPException):

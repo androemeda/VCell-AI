@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { BarChart3Icon as Diagram3, Search, Loader2 } from "lucide-react";
 import { MarkdownRenderer } from "./markdown-renderer";
+import { getAccessToken } from "@auth0/nextjs-auth0/client";
 
 interface DiagramSectionProps {
   biomodelId: string;
@@ -14,16 +15,50 @@ export const DiagramSection: React.FC<DiagramSectionProps> = ({
   const [diagramAnalysis, setDiagramAnalysis] = useState<string>("");
   const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
+  const [diagramImageUrl, setDiagramImageUrl] = useState("");
 
   useEffect(() => {
+    let objectUrl = "";
+
+    const fetchDiagramImage = async () => {
+      setIsLoading(true);
+      setError("");
+      setDiagramImageUrl("");
+
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const token = await getAccessToken();
+        const res = await fetch(
+          `${apiUrl}/biomodel/${biomodelId}/diagram/image`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        if (!res.ok) throw new Error("Failed to load diagram image.");
+
+        const blob = await res.blob();
+        objectUrl = URL.createObjectURL(blob);
+        setDiagramImageUrl(objectUrl);
+      } catch (err) {
+        setError("Failed to load diagram image.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
     const fetchDiagramAnalysis = async () => {
       setIsAnalysisLoading(true);
       setAnalysisError("");
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const token = await getAccessToken();
         const res = await fetch(`${apiUrl}/analyse/${biomodelId}/diagram`, {
           method: "POST",
           headers: {
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
         });
@@ -43,8 +78,15 @@ export const DiagramSection: React.FC<DiagramSectionProps> = ({
     };
 
     if (biomodelId) {
+      fetchDiagramImage();
       fetchDiagramAnalysis();
     }
+
+    return () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
   }, [biomodelId]);
 
   return (
@@ -67,14 +109,9 @@ export const DiagramSection: React.FC<DiagramSectionProps> = ({
               <div className="text-red-500 text-center p-3">{error}</div>
             ) : (
               <img
-                src={
-                  `https://vcell.cam.uchc.edu/api/v0/biomodel/${biomodelId}/diagram` ||
-                  "/placeholder.svg"
-                }
+                src={diagramImageUrl || "/placeholder.svg"}
                 alt="Biomodel Diagram"
                 className="max-w-full h-auto mx-auto"
-                onError={() => setError("Failed to load diagram image.")}
-                onLoad={() => setError("")}
               />
             )}
           </div>

@@ -15,14 +15,17 @@ from app.services.vcelldb_service import (
 )
 
 
-async def get_biomodels_controller(params: BiomodelRequestParams) -> dict:
+async def get_biomodels_controller(
+    params: BiomodelRequestParams,
+    client_bearer_token: str | None = None,
+) -> dict:
     """
     Controller function to retrieve biomodels based on filters and sorting.
     Raises:
         HTTPException: If the VCell API request fails.
     """
     try:
-        biomodels = await fetch_biomodels(params)
+        biomodels = await fetch_biomodels(params, client_bearer_token)
         return biomodels
     except httpx.HTTPStatusError as e:
         raise HTTPException(
@@ -108,14 +111,17 @@ async def get_diagram_url_controller(biomodel_id: str) -> str:
         raise HTTPException(status_code=500, detail="Error fetching diagram URL.")
 
 
-async def get_diagram_image_controller(biomodel_id: str) -> Response:
+async def get_diagram_image_controller(
+    biomodel_id: str,
+    client_bearer_token: str | None = None,
+) -> Response:
     """
     Controller function to fetch the diagram image for a biomodel and return it as a PNG response.
     Raises:
         HTTPException: If the image cannot be fetched.
     """
     try:
-        image_bytes = await get_diagram_image(biomodel_id)
+        image_bytes = await get_diagram_image(biomodel_id, client_bearer_token)
         return Response(content=image_bytes, media_type="image/png")
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:

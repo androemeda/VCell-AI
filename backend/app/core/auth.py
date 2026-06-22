@@ -1,6 +1,5 @@
 from typing import Any
 
-import httpx
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -14,6 +13,24 @@ AUTH0_ISSUER = f"https://{settings.AUTH0_DOMAIN}/"
 AUTH0_JWKS_URL = f"{AUTH0_ISSUER}.well-known/jwks.json" # this endpoint contains auth0 public keys
 
 jwks_client = PyJWKClient(AUTH0_JWKS_URL) # this helper downloads , caches and selects correct Auth0 public keys automatically
+
+
+def strip_bearer_prefix(token: str) -> str:
+    """
+    Return only the bearer token value, even if the input includes the
+    Authorization scheme.
+    """
+    token = token.strip().strip('"')
+    if token.lower().startswith("bearer "):
+        return token[7:].strip()
+    return token
+
+
+def bearer_authorization_header(token: str) -> str:
+    """
+    Build a standard Authorization header value from a raw bearer token.
+    """
+    return f"Bearer {strip_bearer_prefix(token)}"
 
 
 async def get_bearer_token(

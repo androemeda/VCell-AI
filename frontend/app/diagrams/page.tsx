@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { getAccessToken } from "@auth0/nextjs-auth0/client";
 
 interface DiagramInfo {
   url: string;
@@ -46,7 +47,15 @@ export default function DiagramsPage() {
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-      const res = await fetch(`${apiUrl}/biomodel/${biomodelId}/diagram/image`);
+      const token = await getAccessToken();
+      const res = await fetch(
+        `${apiUrl}/biomodel/${biomodelId}/diagram/image`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
       const contentType = res.headers.get("content-type");
       if (res.ok && contentType && contentType.startsWith("image")) {
         // If image, create object URL

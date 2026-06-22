@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 from typing import List
+from app.core.auth import get_bearer_token
 from app.schemas.vcelldb_schema import BiomodelRequestParams, SimulationRequestParams
 from app.controllers.vcelldb_controller import (
     get_biomodels_controller,
@@ -17,12 +18,15 @@ router = APIRouter()
 
 
 @router.get("/biomodel", response_model=dict)
-async def get_biomodels(params: BiomodelRequestParams = Depends()):
+async def get_biomodels(
+    params: BiomodelRequestParams = Depends(),
+    client_bearer_token: str = Depends(get_bearer_token),
+):
     """
     Endpoint to retrieve biomodels based on provided filters and sorting.
     """
     try:
-        return await get_biomodels_controller(params)
+        return await get_biomodels_controller(params, client_bearer_token)
     except HTTPException as e:
         raise e
 
@@ -84,11 +88,14 @@ async def get_diagram_url(biomodel_id: str):
 
 
 @router.get("/biomodel/{biomodel_id}/diagram/image")
-async def get_diagram_image(biomodel_id: str):
+async def get_diagram_image(
+    biomodel_id: str,
+    client_bearer_token: str = Depends(get_bearer_token),
+):
     """
     Endpoint to get the diagram image (PNG) for a given biomodel.
     """
-    return await get_diagram_image_controller(biomodel_id)
+    return await get_diagram_image_controller(biomodel_id, client_bearer_token)
 
 
 @router.get("/biomodel/{biomodel_id}/applications/files", response_model=dict)

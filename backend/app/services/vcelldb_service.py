@@ -1,4 +1,5 @@
 from app.core.logger import get_logger
+from app.core.auth import bearer_authorization_header, strip_bearer_prefix
 import httpx
 import asyncio
 import re
@@ -8,8 +9,43 @@ from langfuse import observe
 from typing import List
 
 VCELL_API_BASE_URL = "https://vcell.cam.uchc.edu/api/v0"
+VCELL_BEARER_TOKEN_URL = "https://vcell.cam.uchc.edu/api/v1/users/bearerToken"
 
 logger = get_logger("vcelldb_service")
+
+
+def _extract_vcell_bearer_token(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        raise ValueError("VCell bearer token response was not valid JSON.")
+
+    if not isinstance(payload, dict):
+        raise ValueError("VCell bearer token response was not an object.")
+
+    token = payload.get("token")
+    if not isinstance(token, str) or not token.strip():
+        raise ValueError("VCell bearer token response did not contain token.")
+
+    return strip_bearer_prefix(token)
+
+
+async def exchange_vcell_bearer_token(client_bearer_token: str) -> str:
+    """
+    Exchange the frontend bearer token for the VCell bearer token required by
+    the authenticated biomodel API.
+    """
+    logger.info("Exchanging client bearer token for VCell bearer token")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            VCELL_BEARER_TOKEN_URL,
+            headers={
+                "Authorization": bearer_authorization_header(client_bearer_token),
+                "accept": "application/json",
+            },
+        )
+        response.raise_for_status()
+        return _extract_vcell_bearer_token(response)
 
 
 def sanitize_vcml_content(vcml_content: str) -> str:
@@ -65,7 +101,10 @@ async def check_vcell_connectivity() -> bool:
 
 
 @observe(name="FETCH_BIOMODELS")
-async def fetch_biomodels(params: BiomodelRequestParams) -> dict:
+async def fetch_biomodels(
+    params: BiomodelRequestParams,
+    client_bearer_token: str | None = None,
+) -> dict:
     """
     Fetch a list of biomodels from the VCell API based on filtering and sorting parameters.
 
@@ -83,7 +122,11 @@ async def fetch_biomodels(params: BiomodelRequestParams) -> dict:
     # Construct the query string using urlencoded parameters (params_dict)
     query_string = urlencode(params_dict)
 
-    # Construct the full URL
+    headers = {}
+    if client_bearer_token:
+        vcell_bearer_token = await exchange_vcell_bearer_token(client_bearer_token)
+        headers["Authorization"] = bearer_authorization_header(vcell_bearer_token)
+
     url = f"{VCELL_API_BASE_URL}/biomodel?{query_string}"
 
     # Log the URL being queried
@@ -91,7 +134,7 @@ async def fetch_biomodels(params: BiomodelRequestParams) -> dict:
 
     # Perform the API request
     async with httpx.AsyncClient() as client:
-        response = await client.get(url)
+        response = await client.get(url, headers=headers)
         response.raise_for_status()
         raw_data = response.json()
 
@@ -341,7 +384,10 @@ async def get_diagram_url(biomodel_id: str) -> str:
 
 
 @observe(name="GET_DIAGRAM_IMAGE")
-async def get_diagram_image(biomodel_id: str) -> bytes:
+async def get_diagram_image(
+    biomodel_id: str,
+    client_bearer_token: str | None = None,
+) -> bytes:
     """
     Fetches the diagram image for a given biomodel from the VCell API and returns the image bytes.
 
@@ -351,9 +397,15 @@ async def get_diagram_image(biomodel_id: str) -> bytes:
     Returns:
         bytes: The image content (PNG) of the biomodel diagram.
     """
+    headers = {}
+    if client_bearer_token:
+        vcell_bearer_token = await exchange_vcell_bearer_token(client_bearer_token)
+        headers["Authorization"] = bearer_authorization_header(vcell_bearer_token)
+
     async with httpx.AsyncClient() as client:
         response = await client.get(
-            f"{VCELL_API_BASE_URL}/biomodel/{biomodel_id}/diagram"
+            f"{VCELL_API_BASE_URL}/biomodel/{biomodel_id}/diagram",
+            headers=headers,
         )
         response.raise_for_status()
         return response.content
@@ -462,4 +514,3 @@ async def fetch_publications() -> List[dict]:
     except Exception as e:
         logger.error(f"Unexpected error fetching publications: {str(e)}")
         raise e
-

@@ -6,7 +6,7 @@ from app.utils.tools_utils import (
 from app.services.vcelldb_service import (
     fetch_biomodels,
     get_vcml_file,
-    get_diagram_url,
+    get_diagram_image,
 )
 
 from app.utils.system_prompt import SYSTEM_PROMPT
@@ -15,6 +15,7 @@ from app.schemas.vcelldb_schema import BiomodelRequestParams
 from app.core.litellm import get_litellm_client
 from app.core.config import settings
 import json
+import base64
 from app.core.logger import get_logger
 
 logger = get_logger("llm_service")
@@ -252,7 +253,12 @@ async def analyse_biomodel(
         return f"An error occurred during AI analysis: {str(e)}"
 
 
-async def analyse_diagram(biomodel_id: str, virtual_key: str, model: str):
+async def analyse_diagram(
+    biomodel_id: str,
+    virtual_key: str,
+    model: str,
+    client_bearer_token: str | None = None,
+):
     """
     Analyze diagram for a given biomodel.
 
@@ -275,11 +281,15 @@ async def analyse_diagram(biomodel_id: str, virtual_key: str, model: str):
             "orderBy": "date_desc",
         }
         biomodel_params = BiomodelRequestParams(**params_dict)
-        biomodels_info = await fetch_biomodels(biomodel_params)
+        biomodels_info = await fetch_biomodels(biomodel_params, client_bearer_token)
         biomodel_info = f"Here is some information about Biomodel {biomodel_id}: {str(biomodels_info)}"
 
-        # Fetch Diagram URL
-        diagram_url = await get_diagram_url(biomodel_id)
+        diagram_image = await get_diagram_image(biomodel_id, client_bearer_token)
+        diagram_image_url = (
+            "data:image/png;base64,"
+            + base64.b64encode(diagram_image).decode("utf-8")
+        )
+
         # Diagram Analysis
         diagram_analysis_prompt = (
             "You are a VCell BioModel Assistant, designed to help users understand and interact with biological models in VCell. "
@@ -288,7 +298,7 @@ async def analyse_diagram(biomodel_id: str, virtual_key: str, model: str):
         )
         diagram_analysis_prompt = [
             {"type": "text", "text": diagram_analysis_prompt},
-            {"type": "image_url", "image_url": {"url": diagram_url}},
+            {"type": "image_url", "image_url": {"url": diagram_image_url}},
         ]
         response, _model_used = await _create_chat_completion(
             virtual_key,

@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChatBox } from "@/components/ChatBox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getAccessToken } from "@auth0/nextjs-auth0/client";
 
 interface AnalysisResults {
   title: string;
@@ -62,14 +63,22 @@ export default function AnalysisResultsPage({
   const [combinedMessages, setCombinedMessages] = useState<string[]>([]);
   const [biomodelData, setBiomodelData] = useState<BiomodelDetail | null>(null);
   const [biomodelLoading, setBiomodelLoading] = useState(true);
+  const [diagramImageUrl, setDiagramImageUrl] = useState("");
+  const [diagramImageError, setDiagramImageError] = useState("");
 
   useEffect(() => {
     const fetchBiomodelData = async () => {
       setBiomodelLoading(true);
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-        const res = await fetch(`${apiUrl}/biomodel?bmId=${id}`);
-        
+        const token = await getAccessToken();
+        const res = await fetch(`${apiUrl}/biomodel?bmId=${id}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            accept: "application/json",
+          },
+        });
+
         if (res.ok) {
           const json = await res.json();
           if (json.data && Array.isArray(json.data) && json.data.length > 0) {
@@ -87,14 +96,51 @@ export default function AnalysisResultsPage({
   }, [id]);
 
   useEffect(() => {
+    let objectUrl = "";
+
+    const fetchDiagramImage = async () => {
+      setDiagramImageUrl("");
+      setDiagramImageError("");
+
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const token = await getAccessToken();
+        const res = await fetch(`${apiUrl}/biomodel/${id}/diagram/image`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) throw new Error("Failed to load diagram image.");
+
+        const blob = await res.blob();
+        objectUrl = URL.createObjectURL(blob);
+        setDiagramImageUrl(objectUrl);
+      } catch (err) {
+        setDiagramImageError("Failed to load diagram image.");
+      }
+    };
+
+    fetchDiagramImage();
+
+    return () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [id]);
+
+  useEffect(() => {
     const fetchDiagramAnalysis = async () => {
       setIsAnalysisLoading(true);
       setAnalysisError("");
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const token = await getAccessToken();
         const res = await fetch(`${apiUrl}/analyse/${id}/diagram`, {
           method: "POST",
           headers: {
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
         });
@@ -121,9 +167,11 @@ export default function AnalysisResultsPage({
           url.searchParams.set("user_prompt", prompt);
         }
 
+        const token = await getAccessToken();
         const analyseRes = await fetch(url.toString(), {
           method: "POST",
           headers: {
+            Authorization: `Bearer ${token}`,
             accept: "application/json",
           },
         });
@@ -225,7 +273,10 @@ export default function AnalysisResultsPage({
         <div className="text-center">
           <h2 className="text-2xl font-semibold text-red-600 mb-2">Error</h2>
           <p className="text-slate-600 mb-3">{error}</p>
-          <Button onClick={() => router.push("/analyze")} className="flex items-center gap-2">
+          <Button
+            onClick={() => router.push("/analyze")}
+            className="flex items-center gap-2"
+          >
             <Search className="h-4 w-4" />
             Try Again
           </Button>
@@ -235,10 +286,12 @@ export default function AnalysisResultsPage({
   }
 
   if (biomodelLoading) {
-    return <div className="min-h-screen bg-slate-50 p-8 text-center">Loading biomodel...</div>;
+    return (
+      <div className="min-h-screen bg-slate-50 p-8 text-center">
+        Loading biomodel...
+      </div>
+    );
   }
-
-  const biomodelDiagramUrl = `https://vcell.cam.uchc.edu/api/v0/biomodel/${id}/diagram`;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -270,10 +323,13 @@ export default function AnalysisResultsPage({
                 <div className="flex flex-wrap gap-4 mt-3 text-base text-slate-600">
                   <span className="flex items-center gap-1">
                     <Hash className="h-4 w-4 text-blue-400" />{" "}
-                    <span className="font-mono text-blue-700">{biomodelData.bmKey}</span>
+                    <span className="font-mono text-blue-700">
+                      {biomodelData.bmKey}
+                    </span>
                   </span>
                   <span className="flex items-center gap-1">
-                    <User className="h-4 w-4 text-blue-400" /> {biomodelData.ownerName}
+                    <User className="h-4 w-4 text-blue-400" />{" "}
+                    {biomodelData.ownerName}
                   </span>
                   <span className="flex items-center gap-1">
                     <Calendar className="h-4 w-4 text-blue-400" />{" "}
@@ -287,7 +343,9 @@ export default function AnalysisResultsPage({
                     )}
                     <span
                       className={
-                        biomodelData.privacy === 1 ? "text-red-600" : "text-green-600"
+                        biomodelData.privacy === 1
+                          ? "text-red-600"
+                          : "text-green-600"
                       }
                     >
                       {biomodelData.privacy === 1 ? "Private" : "Public"}
@@ -312,13 +370,17 @@ export default function AnalysisResultsPage({
                   Biomodel Diagram
                 </span>
               </div>
-              <img
-                src={biomodelDiagramUrl || "/placeholder.svg"}
-                alt="Biomodel Diagram"
-                className="max-w-2xl h-auto mx-auto border border-slate-200 rounded shadow"
-                onError={() => setError("Failed to load diagram image.")}
-                onLoad={() => setError("")}
-              />
+              {diagramImageError ? (
+                <div className="text-red-500 text-center p-3">
+                  {diagramImageError}
+                </div>
+              ) : (
+                <img
+                  src={diagramImageUrl || "/placeholder.svg"}
+                  alt="Biomodel Diagram"
+                  className="max-w-2xl h-auto mx-auto border border-slate-200 rounded shadow"
+                />
+              )}
             </div>
 
             {/* Chat Box */}

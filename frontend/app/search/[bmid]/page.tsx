@@ -29,6 +29,7 @@ import {
   Briefcase,
   Cog,
 } from "lucide-react";
+import { getAccessToken } from "@auth0/nextjs-auth0/client";
 
 interface Simulation {
   key: string;
@@ -89,6 +90,8 @@ export default function BiomodelDetailPage() {
   const [diagramAnalysis, setDiagramAnalysis] = useState("");
   const [analysisError, setAnalysisError] = useState("");
   const [combinedMessages, setCombinedMessages] = useState<string[]>([]);
+  const [diagramImageUrl, setDiagramImageUrl] = useState("");
+  const [diagramImageError, setDiagramImageError] = useState("");
 
   const quickActions = [
     {
@@ -130,23 +133,83 @@ export default function BiomodelDetailPage() {
 
   useEffect(() => {
     if (!bmid) return;
-    setLoading(true);
-    setError("");
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/biomodel?bmId=${bmid}`)
-      .then((res) => {
+    const fetchBiomodelDetails = async () => {
+      setLoading(true);
+      setError("");
+
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/biomodel?bmId=${bmid}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              accept: "application/json",
+            },
+          },
+        );
+
         if (!res.ok) throw new Error("Failed to fetch biomodel details");
-        return res.json();
-      })
-      .then((json) => {
+
+        const json = await res.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) {
           setData(json.data[0]);
         } else {
           setError("Biomodel not found.");
         }
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to fetch biomodel details",
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchBiomodelDetails();
   }, [bmid]);
+
+  useEffect(() => {
+    if (!data?.bmKey) return;
+
+    let objectUrl = "";
+
+    const fetchDiagramImage = async () => {
+      setDiagramImageUrl("");
+      setDiagramImageError("");
+
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const token = await getAccessToken();
+        const res = await fetch(
+          `${apiUrl}/biomodel/${data.bmKey}/diagram/image`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        if (!res.ok) throw new Error("Failed to load diagram image.");
+
+        const blob = await res.blob();
+        objectUrl = URL.createObjectURL(blob);
+        setDiagramImageUrl(objectUrl);
+      } catch (err) {
+        setDiagramImageError("Failed to load diagram image.");
+      }
+    };
+
+    fetchDiagramImage();
+
+    return () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [data?.bmKey]);
 
   useEffect(() => {
     if (!data?.bmKey) return;
@@ -154,9 +217,11 @@ export default function BiomodelDetailPage() {
     const fetchDiagramAnalysis = async () => {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const token = await getAccessToken();
         const res = await fetch(`${apiUrl}/analyse/${data.bmKey}/diagram`, {
           method: "POST",
           headers: {
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
         });
@@ -186,8 +251,6 @@ export default function BiomodelDetailPage() {
 
   if (error) return <div className="p-8 text-center text-red-600">{error}</div>;
   if (!data) return null;
-
-  const biomodelDiagramUrl = `https://vcell.cam.uchc.edu/api/v0/biomodel/${data.bmKey}/diagram`;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -259,13 +322,23 @@ export default function BiomodelDetailPage() {
             </div>
           </CardHeader>
           <CardContent className="p-6 bg-white">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="w-full"
+            >
               <TabsList className="grid w-full grid-cols-2 mb-6">
-                <TabsTrigger value="overview" className="flex items-center gap-2 font-bold text-white">
+                <TabsTrigger
+                  value="overview"
+                  className="flex items-center gap-2 font-bold text-white"
+                >
                   <FileText className="h-4 w-4" />
                   Overview
                 </TabsTrigger>
-                <TabsTrigger value="analysis" className="flex items-center gap-2 font-bold text-white">
+                <TabsTrigger
+                  value="analysis"
+                  className="flex items-center gap-2 font-bold text-white"
+                >
                   <Search className="h-4 w-4" />
                   AI Analysis
                 </TabsTrigger>
@@ -274,13 +347,17 @@ export default function BiomodelDetailPage() {
               <TabsContent value="overview" className="space-y-6">
                 {/* Biomodel Diagram block */}
                 <div className="mb-6">
-                  <img
-                    src={biomodelDiagramUrl || "/placeholder.svg"}
-                    alt="Biomodel Diagram"
-                    className="max-w-full h-[350px] mx-auto border border-slate-200 rounded shadow"
-                    onError={() => setError("Failed to load diagram image.")}
-                    onLoad={() => setError("")}
-                  />
+                  {diagramImageError ? (
+                    <div className="text-red-500 text-center p-3">
+                      {diagramImageError}
+                    </div>
+                  ) : (
+                    <img
+                      src={diagramImageUrl || "/placeholder.svg"}
+                      alt="Biomodel Diagram"
+                      className="max-w-full h-[350px] mx-auto border border-slate-200 rounded shadow"
+                    />
+                  )}
                 </div>
 
                 {/* BNGL Visualization Section */}
@@ -320,7 +397,9 @@ export default function BiomodelDetailPage() {
                   <CollapsibleContent>
                     <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
                       {data.applications?.map((app) => {
-                        const encodedAppName = encodeURIComponent(app.name || "");
+                        const encodedAppName = encodeURIComponent(
+                          app.name || "",
+                        );
                         const bnglUrl = `https://vcell.cam.uchc.edu/api/v0/biomodel/${data.bmKey}/biomodel.bngl?appname=${encodedAppName}`;
                         const sbmlUrl = `https://vcell.cam.uchc.edu/api/v0/biomodel/${data.bmKey}/biomodel.sbml?appname=${encodedAppName}`;
                         return (
@@ -413,7 +492,9 @@ export default function BiomodelDetailPage() {
                                   <li key={i}>
                                     {ov.name} ({ov.type}):{" "}
                                     <span className="font-mono text-blue-700">
-                                      {ov.values ? ov.values.join(", ") : "No values"}
+                                      {ov.values
+                                        ? ov.values.join(", ")
+                                        : "No values"}
                                     </span>{" "}
                                     (Cardinality: {ov.cardinality})
                                   </li>
