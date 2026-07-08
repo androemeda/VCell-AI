@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Search,
   History,
@@ -14,6 +15,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
+import { getAccessToken, useUser } from "@auth0/nextjs-auth0/client";
 
 import {
   Sidebar,
@@ -39,10 +41,101 @@ const historyItems = [
   "VCML File Analysis of Calcium Models",
 ];
 
+interface BudgetUsage {
+  spend: number;
+  max_budget: number | null;
+  remaining_budget: number | null;
+}
+
+const formatBudget = (value: number | null): string => {
+  if (value === null) {
+    return "Unlimited";
+  }
+
+  if (Math.abs(value) > 0 && Math.abs(value) < 1) {
+    return `$${Number(value.toFixed(4)).toString()}`;
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
+};
+
 export function AppSidebar() {
   const pathname = usePathname();
   const { state } = useSidebar();
+  const { user, isLoading: isUserLoading } = useUser();
+  const [budgetUsage, setBudgetUsage] = useState<BudgetUsage | null>(null);
+  const [usageError, setUsageError] = useState(false);
   const isCollapsed = state === "collapsed";
+
+  useEffect(() => {
+    if (isUserLoading || !user) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const fetchBudgetUsage = async () => {
+      try {
+        const token = await getAccessToken();
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+        if (!apiUrl) {
+          throw new Error("NEXT_PUBLIC_API_URL is not configured");
+        }
+
+        const response = await fetch(`${apiUrl}/users/me/budget`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            accept: "application/json",
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Budget request failed with ${response.status}`);
+        }
+
+        setBudgetUsage((await response.json()) as BudgetUsage);
+        setUsageError(false);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error("Failed to fetch budget usage", error);
+          setUsageError(true);
+        }
+      }
+    };
+
+    fetchBudgetUsage();
+
+    return () => {
+      controller.abort();
+    };
+  }, [isUserLoading, user]);
+
+  const spend = budgetUsage?.spend ?? 0;
+  const maxBudget = budgetUsage?.max_budget ?? null;
+  const remainingBudget = budgetUsage?.remaining_budget ?? null;
+  const isUsageLoading = !usageError && !budgetUsage && !!user;
+  const usagePercent =
+    maxBudget && maxBudget > 0 ? Math.min((spend / maxBudget) * 100, 100) : 0;
+  const remainingText = usageError
+    ? "Unavailable"
+    : isUsageLoading
+      ? "Loading..."
+      : `${formatBudget(remainingBudget)} remaining`;
+  const usageSummaryText = usageError
+    ? "Budget unavailable"
+    : isUsageLoading
+      ? "Loading budget..."
+      : maxBudget === null
+        ? `${formatBudget(spend)} spent, unlimited budget`
+        : `${formatBudget(spend)} spent of ${formatBudget(maxBudget)} budget`;
+  const collapsedUsageText =
+    usageError || isUsageLoading ? "--" : formatBudget(spend);
 
   if (pathname == "/") {
     return null;
@@ -244,25 +337,27 @@ export function AppSidebar() {
 
       <SidebarFooter className="border-t border-slate-200 p-4">
         <div className="space-y-3">
-          {/* Usage Progress Bar */}
+          {/* Budget Progress Bar */}
           <div className="space-y-2">
             {!isCollapsed && (
               <div className="flex justify-between items-center text-xs text-slate-600">
-                <span>Monthly Token Limit</span>
-                <span>600K remaining</span>
+                <span>Budget</span>
+                <span>{remainingText}</span>
               </div>
             )}
             <div className="w-full bg-slate-200 rounded-full h-2">
               <div
                 className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: "40%" }}
+                style={{ width: `${usagePercent}%` }}
               ></div>
             </div>
             {isCollapsed ? (
-              <div className="text-xs text-slate-500 text-center">0.4M</div>
+              <div className="text-xs text-slate-500 text-center">
+                {collapsedUsageText}
+              </div>
             ) : (
               <div className="text-xs text-slate-500 text-center">
-                400K of 1M tokens used this month
+                {usageSummaryText}
               </div>
             )}
           </div>

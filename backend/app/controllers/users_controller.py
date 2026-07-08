@@ -1,6 +1,11 @@
 from fastapi import HTTPException
 
-from app.services.users_service import sync_auth0_user
+from app.services.users_service import (
+    MissingAuth0SubjectError,
+    UserBudgetLookupError,
+    get_current_user_budget,
+    sync_current_user,
+)
 
 
 async def sync_current_user_controller(
@@ -10,15 +15,25 @@ async def sync_current_user_controller(
     Sync authenticated Auth0 user into Supabase.
     """
 
-    auth0_sub = payload.get("sub")
-
-    if not auth0_sub:
+    try:
+        return await sync_current_user(payload)
+    except MissingAuth0SubjectError as exc:
         raise HTTPException(
             status_code=400,
-            detail="Missing Auth0 subject claim",
+            detail=str(exc),
         )
 
-    return {
-        "status": "success",
-        "user": sync_auth0_user(payload),
-    }
+
+async def get_current_user_budget_controller(payload: dict) -> dict:
+    try:
+        return await get_current_user_budget(payload)
+    except MissingAuth0SubjectError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+    except UserBudgetLookupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        )
