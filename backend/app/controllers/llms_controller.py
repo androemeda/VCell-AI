@@ -34,6 +34,7 @@ async def get_llm_response(
     conversation_history: list[dict],
     model: LLMModel,
     payload: dict,
+    client_bearer_token: str,
 ) -> tuple[str, list, str]:
     """
     Controller function to interact with the LLM service.
@@ -55,6 +56,7 @@ async def get_llm_response(
             conversation_history,
             virtual_key,
             model,
+            client_bearer_token,
         )
         return result, bmkeys, model_used
     except Exception as e:

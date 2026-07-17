@@ -15,6 +15,7 @@ router = APIRouter()
 @router.post("/query", response_model=ChatResponse)
 async def query_llm(
     request: ChatRequest,
+    client_bearer_token: str = Depends(get_bearer_token),
     payload: dict = Depends(verify_auth0_token),
 ):
     """
@@ -28,6 +29,7 @@ async def query_llm(
         request.conversation_history,
         request.model,
         payload,
+        client_bearer_token,
     )
     return {"response": result, "bmkeys": bmkeys, "model_used": model_used}
 

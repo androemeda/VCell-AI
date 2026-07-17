@@ -189,12 +189,15 @@ ToolsDefinitions = [
 
 
 # Tool Executor Function
-async def execute_tool(name, args):
+async def execute_tool(name, args, client_bearer_token: str | None = None):
     """
     Executes a function based on the provided tool name and arguments.
     Args:
         name (str): The name of the function to call (tool).
         args (dict): The arguments to pass to the function.
+        client_bearer_token (str | None): The caller's bearer token, if any.
+            Passed through to tools that can use it to also surface the
+            caller's private data.
     Returns:
         The result of the function call.
     """
@@ -208,7 +211,7 @@ async def execute_tool(name, args):
             #     args["savedHigh"] = None
             args["maxRows"] = 1000
             params = BiomodelRequestParams(**args)
-            return await fetch_biomodels(params)
+            return await fetch_biomodels(params, client_bearer_token)
 
         elif name == "fetch_simulation_details":
             params = SimulationRequestParams(**args)
