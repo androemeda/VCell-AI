@@ -30,6 +30,7 @@ import {
   Cog,
 } from "lucide-react";
 import { getAccessToken, useUser } from "@auth0/nextjs-auth0/client";
+import { getOptionalAccessToken } from "@/lib/get-optional-access-token";
 import { LoginRequiredDialog } from "@/components/login-required-dialog";
 
 interface Simulation {
@@ -142,12 +143,12 @@ export default function BiomodelDetailPage() {
       setError("");
 
       try {
-        const token = await getAccessToken();
+        const token = await getOptionalAccessToken();
         const res = await fetch(
           `${process.env.NEXT_PUBLIC_API_URL}/biomodel?bmId=${bmid}`,
           {
             headers: {
-              Authorization: `Bearer ${token}`,
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
               accept: "application/json",
             },
           },
@@ -186,12 +187,12 @@ export default function BiomodelDetailPage() {
 
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-        const token = await getAccessToken();
+        const token = await getOptionalAccessToken();
         const res = await fetch(
           `${apiUrl}/biomodel/${data.bmKey}/diagram/image`,
           {
             headers: {
-              Authorization: `Bearer ${token}`,
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
           },
         );

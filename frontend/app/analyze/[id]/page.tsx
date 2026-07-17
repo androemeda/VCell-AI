@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { ChatBox } from "@/components/ChatBox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAccessToken, useUser } from "@auth0/nextjs-auth0/client";
+import { getOptionalAccessToken } from "@/lib/get-optional-access-token";
 import { LoginRequiredDialog } from "@/components/login-required-dialog";
 
 interface AnalysisResults {
@@ -74,10 +75,10 @@ export default function AnalysisResultsPage({
       setBiomodelLoading(true);
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-        const token = await getAccessToken();
+        const token = await getOptionalAccessToken();
         const res = await fetch(`${apiUrl}/biomodel?bmId=${id}`, {
           headers: {
-            Authorization: `Bearer ${token}`,
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
             accept: "application/json",
           },
         });
@@ -107,10 +108,10 @@ export default function AnalysisResultsPage({
 
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-        const token = await getAccessToken();
+        const token = await getOptionalAccessToken();
         const res = await fetch(`${apiUrl}/biomodel/${id}/diagram/image`, {
           headers: {
-            Authorization: `Bearer ${token}`,
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         });
 

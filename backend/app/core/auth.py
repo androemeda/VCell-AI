@@ -65,6 +65,20 @@ async def get_bearer_token(
     return credentials.credentials
 
 
+async def get_optional_bearer_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> str | None:
+    """
+    Extract raw bearer token from Authorization header if present, without
+    requiring one. Lets anonymous callers through for endpoints that serve
+    public data but can use a token to also surface the caller's private data.
+    """
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        return None
+
+    return credentials.credentials
+
+
 async def verify_auth0_token(
     access_token: str = Depends(get_bearer_token),
 ) -> dict[str, Any]:

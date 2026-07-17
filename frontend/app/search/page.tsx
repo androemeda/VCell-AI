@@ -21,7 +21,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import Link from "next/link";
-import { getAccessToken } from "@auth0/nextjs-auth0/client";
+import { getOptionalAccessToken } from "@/lib/get-optional-access-token";
 
 interface SearchFilters {
   bmId: string;
@@ -81,10 +81,10 @@ export default function BiomodelSearchPage() {
       params.append("maxRows", filters.maxRows.toString());
       params.append("orderBy", filters.orderBy);
       const apiUrl = `${process.env.NEXT_PUBLIC_API_URL}/biomodel?${params.toString()}`;
-      const token = await getAccessToken();
+      const token = await getOptionalAccessToken();
       const res = await fetch(apiUrl, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           accept: "application/json",
         },
       });
