@@ -4,15 +4,31 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
+from jwt.exceptions import PyJWKClientError
 
 from app.core.config import settings
 
 bearer_scheme = HTTPBearer(auto_error=False)
+_jwks_client: PyJWKClient | None = None
 
-AUTH0_ISSUER = f"https://{settings.AUTH0_DOMAIN}/"
-AUTH0_JWKS_URL = f"{AUTH0_ISSUER}.well-known/jwks.json" # this endpoint contains auth0 public keys
 
-jwks_client = PyJWKClient(AUTH0_JWKS_URL) # this helper downloads , caches and selects correct Auth0 public keys automatically
+def _get_auth0_config() -> tuple[str, str, PyJWKClient]:
+    if not settings.AUTH0_DOMAIN or not settings.AUTH0_AUDIENCE:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Auth0 configuration is missing",
+        )
+
+    issuer = f"https://{settings.AUTH0_DOMAIN}/"
+    jwks_url = f"{issuer}.well-known/jwks.json"
+
+    global _jwks_client
+    if _jwks_client is None:
+        # PyJWKClient downloads and caches Auth0 signing keys lazily,
+        # so missing network access does not block app startup.
+        _jwks_client = PyJWKClient(jwks_url)
+
+    return issuer, settings.AUTH0_AUDIENCE, _jwks_client
 
 
 def strip_bearer_prefix(token: str) -> str:
@@ -57,6 +73,7 @@ async def verify_auth0_token(
     """
 
     try:
+        issuer, audience, jwks_client = _get_auth0_config()
         signing_key = jwks_client.get_signing_key_from_jwt(
             access_token
         ).key
@@ -65,8 +82,8 @@ async def verify_auth0_token(
             access_token,
             signing_key,
             algorithms=["RS256"],
-            audience=settings.AUTH0_AUDIENCE,
-            issuer=AUTH0_ISSUER,
+            audience=audience,
+            issuer=issuer,
         )
 
         return payload
@@ -77,7 +94,7 @@ async def verify_auth0_token(
             detail="Token has expired",
         )
 
-    except jwt.InvalidTokenError:
+    except (jwt.InvalidTokenError, PyJWKClientError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",

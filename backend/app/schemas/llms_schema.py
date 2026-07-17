@@ -14,3 +14,7 @@ class ChatResponse(BaseModel):
     response: str
     bmkeys: list = Field(default_factory=list)
     model_used: str
+
+
+class AnalysisResponse(BaseModel):
+    response: str

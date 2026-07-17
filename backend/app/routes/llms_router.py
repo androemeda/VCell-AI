@@ -7,7 +7,7 @@ from app.controllers.llms_controller import (
     analyse_diagram_controller,
 )
 from app.core.auth import get_bearer_token, verify_auth0_token
-from app.schemas.llms_schema import ChatRequest, ChatResponse, LLMModel
+from app.schemas.llms_schema import AnalysisResponse, ChatRequest, ChatResponse, LLMModel
 
 router = APIRouter()
 
@@ -32,7 +32,7 @@ async def query_llm(
     return {"response": result, "bmkeys": bmkeys, "model_used": model_used}
 
 
-@router.post("/analyse/{biomodel_id}")
+@router.post("/analyse/{biomodel_id}", response_model=AnalysisResponse)
 async def analyse_biomodel(
     biomodel_id: str,
     user_prompt: str,
@@ -51,7 +51,7 @@ async def analyse_biomodel(
     return {"response": result}
 
 
-@router.post("/analyse/{biomodel_id}/vcml")
+@router.post("/analyse/{biomodel_id}/vcml", response_model=AnalysisResponse)
 async def analyse_vcml(
     biomodel_id: str,
     model: LLMModel = "openai-model",
@@ -68,7 +68,7 @@ async def analyse_vcml(
     return {"response": result}
 
 
-@router.post("/analyse/{biomodel_id}/diagram")
+@router.post("/analyse/{biomodel_id}/diagram", response_model=AnalysisResponse)
 async def analyse_diagram(
     biomodel_id: str,
     model: LLMModel = "openai-model",
